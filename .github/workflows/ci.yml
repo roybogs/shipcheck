@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-action:
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Shell syntax
+        run: bash -n scripts/shipcheck.sh
+
+      - name: Build signed fixture app
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/ShipCheckFixture.app"
+          mkdir -p "$APP/Contents/MacOS"
+
+          cat > "$APP/Contents/Info.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleExecutable</key><string>ShipCheckFixture</string>
+            <key>CFBundleIdentifier</key><string>dev.shipcheck.fixture</string>
+            <key>CFBundleName</key><string>ShipCheckFixture</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>1.2.3</string>
+            <key>CFBundleVersion</key><string>42</string>
+          </dict>
+          </plist>
+          PLIST
+
+          cat > "$RUNNER_TEMP/main.c" <<'C'
+          #include <stdio.h>
+          int main(void) { puts("ShipCheck fixture"); return 0; }
+          C
+
+          clang "$RUNNER_TEMP/main.c" -o "$APP/Contents/MacOS/ShipCheckFixture"
+          codesign --force --deep --sign - "$APP"
+          echo "SHIPCHECK_FIXTURE=$APP" >> "$GITHUB_ENV"
+
+      - name: Verify known-good fixture
+        id: positive
+        uses: ./
+        with:
+          artifact: ${{ env.SHIPCHECK_FIXTURE }}
+          expected-bundle-id: dev.shipcheck.fixture
+          expected-version: 1.2.3
+          expected-build: "42"
+          require-gatekeeper: "false"
+          require-notarization: "false"
+          receipt-path: ${{ runner.temp }}/shipcheck-positive.json
+
+      - name: Assert positive outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ steps.positive.outputs.status }}" = "PASS"
+          test "${{ steps.positive.outputs.bundle-id }}" = "dev.shipcheck.fixture"
+          test "${{ steps.positive.outputs.version }}" = "1.2.3"
+          python3 - <<'PY'
+          import json, os
+          path = os.path.join(os.environ['RUNNER_TEMP'], 'shipcheck-positive.json')
+          data = json.load(open(path))
+          assert data['status'] == 'PASS'
+          assert data['bundle_id'] == 'dev.shipcheck.fixture'
+          assert data['version'] == '1.2.3'
+          PY
+
+      - name: Reject identity drift
+        shell: bash
+        run: |
+          set -euo pipefail
+          export SHIPCHECK_ARTIFACT="$SHIPCHECK_FIXTURE"
+          export SHIPCHECK_EXPECTED_BUNDLE_ID="dev.shipcheck.wrong"
+          export SHIPCHECK_EXPECTED_VERSION="1.2.3"
+          export SHIPCHECK_EXPECTED_BUILD="42"
+          export SHIPCHECK_EXPECTED_TEAM_ID=""
+          export SHIPCHECK_EXPECTED_ARCHITECTURES=""
+          export SHIPCHECK_REQUIRE_GATEKEEPER="false"
+          export SHIPCHECK_REQUIRE_NOTARIZATION="false"
+          export SHIPCHECK_LAUNCH_SMOKE="false"
+          export SHIPCHECK_RECEIPT_PATH="$RUNNER_TEMP/shipcheck-negative.json"
+
+          if bash scripts/shipcheck.sh; then
+            echo "ShipCheck incorrectly accepted identity drift" >&2
+            exit 1
+          fi
+
+          python3 - <<'PY'
+          import json, os
+          path = os.path.join(os.environ['RUNNER_TEMP'], 'shipcheck-negative.json')
+          data = json.load(open(path))
+          assert data['status'] == 'FAIL'
+          assert any(c['name'] == 'Bundle ID' and c['status'] == 'FAIL' for c in data['checks'])
+          PY
+
+      - name: Upload test receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: shipcheck-test-receipts
+          path: |
+            ${{ runner.temp }}/shipcheck-positive.json
+            ${{ runner.temp }}/shipcheck-negative.json
+          if-no-files-found: warn
