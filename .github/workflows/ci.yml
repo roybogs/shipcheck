@@ -60,7 +60,7 @@ jobs:
           require-notarization: "false"
           receipt-path: ${{ runner.temp }}/shipcheck-positive.json
 
-      - name: Assert positive outputs
+      - name: Assert positive outputs and provenance
         shell: bash
         run: |
           set -euo pipefail
@@ -75,6 +75,10 @@ jobs:
           assert data['artifact_type'] == 'app'
           assert data['bundle_id'] == 'dev.shipcheck.fixture'
           assert data['version'] == '1.2.3'
+          assert data['provenance']['repository'] == os.environ['GITHUB_REPOSITORY']
+          assert data['provenance']['commit'] == os.environ['GITHUB_SHA']
+          assert data['provenance']['run_id'] == os.environ['GITHUB_RUN_ID']
+          assert data['provenance']['runner_os'] == os.environ['RUNNER_OS']
           PY
 
       - name: Package ZIP and DMG fixtures
@@ -125,6 +129,7 @@ jobs:
               assert data['status'] == 'PASS', data
               assert data['artifact_type'] == kind, data
               assert data['bundle_id'] == 'dev.shipcheck.fixture', data
+              assert data['provenance']['repository'] == os.environ['GITHUB_REPOSITORY']
           PY
 
       - name: Reject identity drift
@@ -152,6 +157,7 @@ jobs:
           path = os.path.join(os.environ['RUNNER_TEMP'], 'shipcheck-negative.json')
           data = json.load(open(path))
           assert data['status'] == 'FAIL'
+          assert data['provenance']['commit'] == os.environ['GITHUB_SHA']
           assert any(c['name'] == 'Bundle ID' and c['status'] == 'FAIL' for c in data['checks'])
           PY
 
