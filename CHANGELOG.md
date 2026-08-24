@@ -2,7 +2,7 @@
 
 ## v1.0.0
 
-Initial public release candidate.
+Initial public release.
 
 - verify final `.app`, `.dmg`, `.zip`, and `.pkg` artifacts on macOS runners
 - strict nested code-signature validation
@@ -12,6 +12,7 @@ Initial public release candidate.
 - SHA-256 artifact identity
 - entitlements snapshot hash
 - machine-readable JSON receipt
+- receipt provenance for repository, commit, ref, workflow/run, and runner identity
 - GitHub Actions step summary and outputs
 - optional launch smoke test
 - CI acceptance coverage for `.app`, `.zip`, and `.dmg`
