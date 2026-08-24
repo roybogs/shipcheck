@@ -27,6 +27,8 @@ TEAM_ID=""
 ARCHITECTURES=""
 SHA256=""
 ENTITLEMENTS_SHA256=""
+EXECUTABLE=""
+EXE_PATH=""
 
 cleanup() {
   if [[ -n "$MOUNT_POINT" && -d "$MOUNT_POINT" ]]; then
@@ -37,7 +39,9 @@ cleanup() {
 trap cleanup EXIT
 
 is_true() {
-  case "${1,,}" in
+  local value
+  value="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
+  case "$value" in
     true|1|yes|on) return 0 ;;
     *) return 1 ;;
   esac
@@ -48,7 +52,10 @@ sanitize() {
 }
 
 record() {
-  local name="$1" status="$2" detail="$(sanitize "${3:-}")"
+  local name="$1"
+  local status="$2"
+  local detail
+  detail="$(sanitize "${3:-}")"
   printf '%s\t%s\t%s\n' "$name" "$status" "$detail" >> "$CHECKS_FILE"
   if [[ "$status" == "FAIL" ]]; then
     FAILURES=$((FAILURES + 1))
@@ -67,7 +74,6 @@ normalize_arches() {
 hash_path() {
   python3 - "$1" <<'PY'
 import hashlib
-import os
 import pathlib
 import sys
 
@@ -79,10 +85,8 @@ if path.is_file():
             h.update(chunk)
 elif path.is_dir():
     root = path.resolve()
-    files = sorted(p for p in root.rglob('*') if p.is_file())
-    for p in files:
-        rel = str(p.relative_to(root)).encode('utf-8')
-        h.update(rel)
+    for p in sorted(x for x in root.rglob('*') if x.is_file()):
+        h.update(str(p.relative_to(root)).encode('utf-8'))
         h.update(b'\0')
         with p.open('rb') as f:
             for chunk in iter(lambda: f.read(1024 * 1024), b''):
@@ -94,9 +98,15 @@ print(h.hexdigest())
 PY
 }
 
+find_first_app() {
+  find "$1" -type d -name '*.app' -print 2>/dev/null | head -n 1 || true
+}
+
 finish() {
   local status="PASS"
-  if (( FAILURES > 0 )); then status="FAIL"; fi
+  if (( FAILURES > 0 )); then
+    status="FAIL"
+  fi
 
   mkdir -p "$(dirname "$RECEIPT_PATH")"
   SHIPCHECK_JSON_STATUS="$status" \
@@ -121,7 +131,10 @@ import sys
 checks = []
 with open(os.environ['SHIPCHECK_JSON_CHECKS'], encoding='utf-8') as f:
     for line in f:
-        name, status, detail = (line.rstrip('\n').split('\t', 2) + ['', ''])[:3]
+        parts = line.rstrip('\n').split('\t', 2)
+        while len(parts) < 3:
+            parts.append('')
+        name, status, detail = parts
         checks.append({'name': name, 'status': status, 'detail': detail})
 
 payload = {
@@ -144,8 +157,7 @@ path = pathlib.Path(sys.argv[1])
 path.write_text(json.dumps(payload, indent=2, sort_keys=True) + '\n', encoding='utf-8')
 PY
 
-  local summary="${GITHUB_STEP_SUMMARY:-}"
-  if [[ -n "$summary" ]]; then
+  if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
     {
       if [[ "$status" == "PASS" ]]; then
         echo "## ✅ ShipCheck PASS"
@@ -172,11 +184,10 @@ PY
       done < "$CHECKS_FILE"
       echo
       echo "Receipt: \`$RECEIPT_PATH\`"
-    } >> "$summary"
+    } >> "$GITHUB_STEP_SUMMARY"
   fi
 
-  local output="${GITHUB_OUTPUT:-}"
-  if [[ -n "$output" ]]; then
+  if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
     {
       echo "status=$status"
       echo "bundle-id=$BUNDLE_ID"
@@ -186,7 +197,7 @@ PY
       echo "architectures=$ARCHITECTURES"
       echo "sha256=$SHA256"
       echo "receipt-path=$RECEIPT_PATH"
-    } >> "$output"
+    } >> "$GITHUB_OUTPUT"
   fi
 
   if [[ "$status" == "PASS" ]]; then
@@ -197,17 +208,20 @@ PY
   return 1
 }
 
-if [[ "$(uname -s)" != "Darwin" ]]; then
-  record "macOS runner" "FAIL" "ShipCheck must run on macOS."
+fatal_finish() {
   finish
   exit $?
+}
+
+if [[ "$(uname -s)" != "Darwin" ]]; then
+  record "macOS runner" "FAIL" "ShipCheck must run on macOS."
+  fatal_finish
 fi
 record "macOS runner" "PASS" "$(sw_vers -productVersion 2>/dev/null || uname -r)"
 
 if [[ -z "$ARTIFACT" || ! -e "$ARTIFACT" ]]; then
   record "Artifact exists" "FAIL" "Path not found: $ARTIFACT"
-  finish
-  exit $?
+  fatal_finish
 fi
 record "Artifact exists" "PASS" "$ARTIFACT"
 
@@ -225,35 +239,37 @@ elif [[ -f "$ARTIFACT" && "$lower" == *.dmg ]]; then
   ARTIFACT_TYPE="dmg"
   MOUNT_POINT="$TMP_DIR/mount"
   mkdir -p "$MOUNT_POINT"
-  if hdiutil attach -readonly -nobrowse -mountpoint "$MOUNT_POINT" "$ARTIFACT" >/dev/null 2>&1; then
-    APP_PATH="$(find "$MOUNT_POINT" -maxdepth 4 -type d -name '*.app' -print -quit 2>/dev/null || true)"
+  if hdiutil attach -readonly -nobrowse -mountpoint "$MOUNT_POINT" "$ARTIFACT" >"$TMP_DIR/hdiutil.txt" 2>&1; then
+    APP_PATH="$(find_first_app "$MOUNT_POINT")"
     if [[ -n "$APP_PATH" ]]; then
       record "DMG mount" "PASS" "Found $(basename "$APP_PATH")"
     else
       record "DMG mount" "FAIL" "Mounted successfully but no .app was found."
     fi
   else
-    record "DMG mount" "FAIL" "hdiutil could not mount the disk image."
+    record "DMG mount" "FAIL" "$(tail -n 3 "$TMP_DIR/hdiutil.txt" 2>/dev/null | tr '\n' ' ')"
   fi
 elif [[ -f "$ARTIFACT" && "$lower" == *.zip ]]; then
   ARTIFACT_TYPE="zip"
   extract="$TMP_DIR/extract"
   mkdir -p "$extract"
-  if ditto -x -k "$ARTIFACT" "$extract" >/dev/null 2>&1; then
-    APP_PATH="$(find "$extract" -maxdepth 5 -type d -name '*.app' -print -quit 2>/dev/null || true)"
+  if ditto -x -k "$ARTIFACT" "$extract" >"$TMP_DIR/ditto.txt" 2>&1; then
+    APP_PATH="$(find_first_app "$extract")"
     if [[ -n "$APP_PATH" ]]; then
       record "ZIP extraction" "PASS" "Found $(basename "$APP_PATH")"
     else
       record "ZIP extraction" "FAIL" "Extracted successfully but no .app was found."
     fi
   else
-    record "ZIP extraction" "FAIL" "ditto could not extract the archive."
+    record "ZIP extraction" "FAIL" "$(tail -n 3 "$TMP_DIR/ditto.txt" 2>/dev/null | tr '\n' ' ')"
   fi
 elif [[ -f "$ARTIFACT" && "$lower" == *.pkg ]]; then
   ARTIFACT_TYPE="pkg"
 else
   record "Artifact type" "FAIL" "Supported types are .app, .dmg, .zip, and .pkg."
+  fatal_finish
 fi
+record "Artifact type" "PASS" "$ARTIFACT_TYPE"
 
 if [[ "$ARTIFACT_TYPE" == "pkg" ]]; then
   if pkgutil --check-signature "$ARTIFACT" >"$TMP_DIR/pkg-signature.txt" 2>&1; then
@@ -263,7 +279,7 @@ if [[ "$ARTIFACT_TYPE" == "pkg" ]]; then
   fi
 
   if [[ -n "$EXPECTED_BUNDLE_ID$EXPECTED_VERSION$EXPECTED_BUILD$EXPECTED_TEAM_ID$EXPECTED_ARCHITECTURES" ]]; then
-    record "App identity expectations" "FAIL" "Bundle/version/team/architecture expectations apply to app-containing artifacts, not bare .pkg files."
+    record "App identity expectations" "FAIL" "App identity/version/team/architecture expectations are not supported for bare .pkg artifacts."
   fi
 
   if is_true "$REQUIRE_GATEKEEPER"; then
@@ -287,7 +303,7 @@ if [[ "$ARTIFACT_TYPE" == "pkg" ]]; then
   fi
 
   if is_true "$LAUNCH_SMOKE"; then
-    record "Launch smoke" "SKIP" "Not applicable to .pkg without installing it."
+    record "Launch smoke" "SKIP" "Not applicable to a bare .pkg artifact."
   fi
 
   finish
@@ -296,8 +312,7 @@ fi
 
 if [[ -z "$APP_PATH" || ! -d "$APP_PATH" ]]; then
   record "App discovery" "FAIL" "No app bundle available for verification."
-  finish
-  exit $?
+  fatal_finish
 fi
 record "App discovery" "PASS" "$APP_PATH"
 
@@ -308,7 +323,7 @@ else
 fi
 
 codesign -dv --verbose=4 "$APP_PATH" >"$TMP_DIR/codesign-detail.txt" 2>&1 || true
-TEAM_ID="$(awk -F= '/^TeamIdentifier=/{print $2; exit}' "$TMP_DIR/codesign-detail.txt" | tr -d '\r' || true)"
+TEAM_ID="$(awk -F= '/^TeamIdentifier=/{print $2; exit}' "$TMP_DIR/codesign-detail.txt" | tr -d '\r\n' || true)"
 
 INFO_PLIST="$APP_PATH/Contents/Info.plist"
 if [[ -f "$INFO_PLIST" ]]; then
@@ -318,36 +333,50 @@ if [[ -f "$INFO_PLIST" ]]; then
   EXECUTABLE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$INFO_PLIST" 2>/dev/null || true)"
   record "Info.plist" "PASS" "Bundle ID=$BUNDLE_ID version=$VERSION build=$BUILD"
 else
-  EXECUTABLE=""
   record "Info.plist" "FAIL" "Contents/Info.plist is missing."
 fi
 
 if [[ -n "$EXPECTED_BUNDLE_ID" ]]; then
-  if [[ "$BUNDLE_ID" == "$EXPECTED_BUNDLE_ID" ]]; then record "Bundle ID" "PASS" "$BUNDLE_ID"; else record "Bundle ID" "FAIL" "Expected $EXPECTED_BUNDLE_ID, got $BUNDLE_ID"; fi
+  if [[ "$BUNDLE_ID" == "$EXPECTED_BUNDLE_ID" ]]; then
+    record "Bundle ID" "PASS" "$BUNDLE_ID"
+  else
+    record "Bundle ID" "FAIL" "Expected $EXPECTED_BUNDLE_ID, got ${BUNDLE_ID:-none}"
+  fi
 else
   record "Bundle ID" "PASS" "${BUNDLE_ID:-detected value unavailable}"
 fi
 
 if [[ -n "$EXPECTED_VERSION" ]]; then
-  if [[ "$VERSION" == "$EXPECTED_VERSION" ]]; then record "Version" "PASS" "$VERSION"; else record "Version" "FAIL" "Expected $EXPECTED_VERSION, got $VERSION"; fi
+  if [[ "$VERSION" == "$EXPECTED_VERSION" ]]; then
+    record "Version" "PASS" "$VERSION"
+  else
+    record "Version" "FAIL" "Expected $EXPECTED_VERSION, got ${VERSION:-none}"
+  fi
 else
   record "Version" "PASS" "${VERSION:-detected value unavailable}"
 fi
 
 if [[ -n "$EXPECTED_BUILD" ]]; then
-  if [[ "$BUILD" == "$EXPECTED_BUILD" ]]; then record "Build version" "PASS" "$BUILD"; else record "Build version" "FAIL" "Expected $EXPECTED_BUILD, got $BUILD"; fi
+  if [[ "$BUILD" == "$EXPECTED_BUILD" ]]; then
+    record "Build version" "PASS" "$BUILD"
+  else
+    record "Build version" "FAIL" "Expected $EXPECTED_BUILD, got ${BUILD:-none}"
+  fi
 else
   record "Build version" "PASS" "${BUILD:-detected value unavailable}"
 fi
 
 if [[ -n "$EXPECTED_TEAM_ID" ]]; then
-  if [[ "$TEAM_ID" == "$EXPECTED_TEAM_ID" ]]; then record "Team ID" "PASS" "$TEAM_ID"; else record "Team ID" "FAIL" "Expected $EXPECTED_TEAM_ID, got ${TEAM_ID:-none}"; fi
+  if [[ "$TEAM_ID" == "$EXPECTED_TEAM_ID" ]]; then
+    record "Team ID" "PASS" "$TEAM_ID"
+  else
+    record "Team ID" "FAIL" "Expected $EXPECTED_TEAM_ID, got ${TEAM_ID:-none}"
+  fi
 else
-  record "Team ID" "PASS" "${TEAM_ID:-not set (for example, ad-hoc signing)}"
+  record "Team ID" "PASS" "${TEAM_ID:-not set}"
 fi
 
-EXE_PATH=""
-if [[ -n "${EXECUTABLE:-}" ]]; then
+if [[ -n "$EXECUTABLE" ]]; then
   EXE_PATH="$APP_PATH/Contents/MacOS/$EXECUTABLE"
 fi
 if [[ -n "$EXE_PATH" && -f "$EXE_PATH" ]]; then
@@ -391,7 +420,9 @@ fi
 
 if is_true "$REQUIRE_NOTARIZATION"; then
   STAPLE_TARGET="$APP_PATH"
-  [[ "$ARTIFACT_TYPE" == "dmg" ]] && STAPLE_TARGET="$ARTIFACT"
+  if [[ "$ARTIFACT_TYPE" == "dmg" ]]; then
+    STAPLE_TARGET="$ARTIFACT"
+  fi
   if xcrun stapler validate "$STAPLE_TARGET" >"$TMP_DIR/stapler.txt" 2>&1; then
     record "Notarization ticket" "PASS" "Stapled ticket validated on $(basename "$STAPLE_TARGET")."
   else
