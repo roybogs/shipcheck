@@ -1,0 +1,93 @@
+name: ShipCheck
+
+description: Verify the exact macOS release artifact before you ship it.
+author: ShipCheck
+
+branding:
+  icon: shield
+  color: blue
+
+inputs:
+  artifact:
+    description: Path to the final .app, .dmg, .zip, or .pkg artifact.
+    required: true
+  expected-bundle-id:
+    description: Expected CFBundleIdentifier for app artifacts.
+    required: false
+    default: ""
+  expected-version:
+    description: Expected CFBundleShortVersionString.
+    required: false
+    default: ""
+  expected-build:
+    description: Expected CFBundleVersion.
+    required: false
+    default: ""
+  expected-team-id:
+    description: Expected signing TeamIdentifier.
+    required: false
+    default: ""
+  expected-architectures:
+    description: Exact executable architecture set, separated by spaces or commas.
+    required: false
+    default: ""
+  require-gatekeeper:
+    description: Require Gatekeeper acceptance.
+    required: false
+    default: "true"
+  require-notarization:
+    description: Require a valid stapled notarization ticket.
+    required: false
+    default: "true"
+  launch-smoke:
+    description: Briefly launch an app and confirm the executable stays alive.
+    required: false
+    default: "false"
+  receipt-path:
+    description: Path for the generated JSON receipt.
+    required: false
+    default: shipcheck-receipt.json
+
+outputs:
+  status:
+    description: PASS or FAIL.
+    value: ${{ steps.verify.outputs.status }}
+  bundle-id:
+    description: Detected bundle identifier.
+    value: ${{ steps.verify.outputs.bundle-id }}
+  version:
+    description: Detected short version.
+    value: ${{ steps.verify.outputs.version }}
+  build:
+    description: Detected build version.
+    value: ${{ steps.verify.outputs.build }}
+  team-id:
+    description: Detected signing Team ID.
+    value: ${{ steps.verify.outputs.team-id }}
+  architectures:
+    description: Detected executable architectures.
+    value: ${{ steps.verify.outputs.architectures }}
+  sha256:
+    description: SHA-256 of the exact input artifact.
+    value: ${{ steps.verify.outputs.sha256 }}
+  receipt-path:
+    description: Generated JSON receipt path.
+    value: ${{ steps.verify.outputs.receipt-path }}
+
+runs:
+  using: composite
+  steps:
+    - id: verify
+      shell: bash
+      env:
+        SHIPCHECK_ARTIFACT: ${{ inputs.artifact }}
+        SHIPCHECK_EXPECTED_BUNDLE_ID: ${{ inputs.expected-bundle-id }}
+        SHIPCHECK_EXPECTED_VERSION: ${{ inputs.expected-version }}
+        SHIPCHECK_EXPECTED_BUILD: ${{ inputs.expected-build }}
+        SHIPCHECK_EXPECTED_TEAM_ID: ${{ inputs.expected-team-id }}
+        SHIPCHECK_EXPECTED_ARCHITECTURES: ${{ inputs.expected-architectures }}
+        SHIPCHECK_REQUIRE_GATEKEEPER: ${{ inputs.require-gatekeeper }}
+        SHIPCHECK_REQUIRE_NOTARIZATION: ${{ inputs.require-notarization }}
+        SHIPCHECK_LAUNCH_SMOKE: ${{ inputs.launch-smoke }}
+        SHIPCHECK_RECEIPT_PATH: ${{ inputs.receipt-path }}
+      run: bash "$GITHUB_ACTION_PATH/scripts/shipcheck.sh"
