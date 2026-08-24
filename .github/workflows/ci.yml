@@ -65,7 +65,7 @@ jobs:
         run: |
           set -euo pipefail
           test "${{ steps.positive.outputs.status }}" = "PASS"
-          test "${{ steps.positive.outputs.bundle-id }}" = "dev.shipcheck.fixture"
+          test "${{ steps.positive.outputs['bundle-id'] }}" = "dev.shipcheck.fixture"
           test "${{ steps.positive.outputs.version }}" = "1.2.3"
           python3 - <<'PY'
           import json, os
