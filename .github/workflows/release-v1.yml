@@ -1,0 +1,54 @@
+name: Publish v1.0.0
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/release-v1.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: github.repository == 'roybogs/shipcheck'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact release commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create version tags
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if ! git ls-remote --exit-code --tags origin refs/tags/v1.0.0 >/dev/null 2>&1; then
+            git tag -a v1.0.0 "$GITHUB_SHA" -m "ShipCheck v1.0.0"
+            git push origin refs/tags/v1.0.0
+          fi
+
+          git tag -fa v1 "$GITHUB_SHA" -m "ShipCheck v1"
+          git push --force origin refs/tags/v1
+
+      - name: Create GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view v1.0.0 --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "v1.0.0 release already exists"
+            exit 0
+          fi
+
+          gh release create v1.0.0 \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --title "ShipCheck v1.0.0" \
+            --notes-file CHANGELOG.md
