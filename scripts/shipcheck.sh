@@ -121,6 +121,15 @@ finish() {
   SHIPCHECK_JSON_ARCHES="$ARCHITECTURES" \
   SHIPCHECK_JSON_ENTITLEMENTS_SHA256="$ENTITLEMENTS_SHA256" \
   SHIPCHECK_JSON_CHECKS="$CHECKS_FILE" \
+  SHIPCHECK_JSON_REPOSITORY="${GITHUB_REPOSITORY:-}" \
+  SHIPCHECK_JSON_COMMIT="${GITHUB_SHA:-}" \
+  SHIPCHECK_JSON_REF="${GITHUB_REF:-}" \
+  SHIPCHECK_JSON_WORKFLOW="${GITHUB_WORKFLOW:-}" \
+  SHIPCHECK_JSON_RUN_ID="${GITHUB_RUN_ID:-}" \
+  SHIPCHECK_JSON_RUN_ATTEMPT="${GITHUB_RUN_ATTEMPT:-}" \
+  SHIPCHECK_JSON_RUNNER_OS="${RUNNER_OS:-}" \
+  SHIPCHECK_JSON_RUNNER_ARCH="${RUNNER_ARCH:-}" \
+  SHIPCHECK_JSON_RUNNER_NAME="${RUNNER_NAME:-}" \
   python3 - "$RECEIPT_PATH" <<'PY'
 import datetime
 import json
@@ -151,6 +160,17 @@ payload = {
     'team_id': os.environ['SHIPCHECK_JSON_TEAM_ID'],
     'architectures': os.environ['SHIPCHECK_JSON_ARCHES'].split() if os.environ['SHIPCHECK_JSON_ARCHES'] else [],
     'entitlements_sha256': os.environ['SHIPCHECK_JSON_ENTITLEMENTS_SHA256'],
+    'provenance': {
+        'repository': os.environ['SHIPCHECK_JSON_REPOSITORY'],
+        'commit': os.environ['SHIPCHECK_JSON_COMMIT'],
+        'ref': os.environ['SHIPCHECK_JSON_REF'],
+        'workflow': os.environ['SHIPCHECK_JSON_WORKFLOW'],
+        'run_id': os.environ['SHIPCHECK_JSON_RUN_ID'],
+        'run_attempt': os.environ['SHIPCHECK_JSON_RUN_ATTEMPT'],
+        'runner_os': os.environ['SHIPCHECK_JSON_RUNNER_OS'],
+        'runner_arch': os.environ['SHIPCHECK_JSON_RUNNER_ARCH'],
+        'runner_name': os.environ['SHIPCHECK_JSON_RUNNER_NAME'],
+    },
     'checks': checks,
 }
 path = pathlib.Path(sys.argv[1])
@@ -173,6 +193,9 @@ PY
       [[ -n "$VERSION" ]] && echo "| Version | \`$VERSION ($BUILD)\` |"
       [[ -n "$TEAM_ID" ]] && echo "| Team ID | \`$TEAM_ID\` |"
       [[ -n "$ARCHITECTURES" ]] && echo "| Architectures | \`$ARCHITECTURES\` |"
+      [[ -n "${GITHUB_REPOSITORY:-}" ]] && echo "| Repository | \`${GITHUB_REPOSITORY}\` |"
+      [[ -n "${GITHUB_SHA:-}" ]] && echo "| Commit | \`${GITHUB_SHA}\` |"
+      [[ -n "${GITHUB_RUN_ID:-}" ]] && echo "| Workflow run | \`${GITHUB_WORKFLOW:-workflow} #${GITHUB_RUN_ID}\` |"
       echo
       echo "### Checks"
       echo
