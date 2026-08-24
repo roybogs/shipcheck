@@ -1,8 +1,12 @@
 # ShipCheck
 
+[![CI](https://github.com/roybogs/shipcheck/actions/workflows/ci.yml/badge.svg)](https://github.com/roybogs/shipcheck/actions/workflows/ci.yml)
+
 Verify the exact macOS release artifact before you ship it.
 
 ShipCheck is a GitHub Action for checking a final `.app`, `.dmg`, `.zip`, or `.pkg` on a macOS runner. It verifies code signing, Gatekeeper acceptance, notarization/stapling, bundle identity, version/build metadata, architectures, and artifact integrity, then emits a machine-readable receipt plus a GitHub Actions summary.
+
+**No ShipCheck account, server, or artifact upload is required.** Verification runs on your own GitHub macOS runner using Apple's local release-security tools.
 
 ## Quick start
 
@@ -31,7 +35,7 @@ jobs:
           expected-architectures: arm64 x86_64
 ```
 
-For production releases, pin ShipCheck to a version tag once `v1` is published.
+For production releases, pin ShipCheck to `roybogs/shipcheck@v1` once the v1 tag is published.
 
 ## What it checks
 
@@ -45,9 +49,14 @@ For production releases, pin ShipCheck to a version tag once `v1` is published.
 - short version and build version
 - signing Team ID
 - executable architectures
+- entitlements snapshot hash
 - optional launch smoke test for apps
 - JSON release receipt
 - human-readable GitHub Actions summary
+
+## Why after packaging matters
+
+A successful Xcode archive or notarization command does not prove that the exact DMG/ZIP/PKG customers receive still has the intended identity, architecture, signature, or ticket. Run ShipCheck on the final file after your packaging/download step and before publishing or promoting it.
 
 ## Inputs
 
@@ -68,9 +77,15 @@ For production releases, pin ShipCheck to a version tag once `v1` is published.
 
 `status`, `bundle-id`, `version`, `build`, `team-id`, `architectures`, `sha256`, and `receipt-path`.
 
-## Philosophy
+## Tested release paths
 
-Signing a build is not the same thing as verifying the exact artifact a customer downloads. ShipCheck runs after packaging and is designed to gate the artifact that is actually going out the door.
+The repository's macOS acceptance gate builds and ad-hoc signs a fixture application, then verifies it directly and through both ZIP and DMG packaging. The gate also deliberately supplies the wrong bundle identifier and requires ShipCheck to reject it.
+
+Gatekeeper and notarization are enabled by default for real release use; the self-test disables those two checks only because its fixture is intentionally ad-hoc signed rather than Developer ID notarized.
+
+## Security and privacy
+
+ShipCheck does not send your release artifact to a ShipCheck service. See [SECURITY.md](SECURITY.md) for vulnerability-reporting guidance and the security boundary.
 
 ## License
 
