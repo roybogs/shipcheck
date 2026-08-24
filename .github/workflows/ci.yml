@@ -48,7 +48,7 @@ jobs:
           codesign --force --deep --sign - "$APP"
           echo "SHIPCHECK_FIXTURE=$APP" >> "$GITHUB_ENV"
 
-      - name: Verify known-good fixture
+      - name: Verify known-good app
         id: positive
         uses: ./
         with:
@@ -72,8 +72,59 @@ jobs:
           path = os.path.join(os.environ['RUNNER_TEMP'], 'shipcheck-positive.json')
           data = json.load(open(path))
           assert data['status'] == 'PASS'
+          assert data['artifact_type'] == 'app'
           assert data['bundle_id'] == 'dev.shipcheck.fixture'
           assert data['version'] == '1.2.3'
+          PY
+
+      - name: Package ZIP and DMG fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP="$RUNNER_TEMP/ShipCheckFixture.zip"
+          DMG="$RUNNER_TEMP/ShipCheckFixture.dmg"
+          DMG_ROOT="$RUNNER_TEMP/dmg-root"
+          mkdir -p "$DMG_ROOT"
+          cp -R "$SHIPCHECK_FIXTURE" "$DMG_ROOT/"
+          ditto -c -k --sequesterRsrc --keepParent "$SHIPCHECK_FIXTURE" "$ZIP"
+          hdiutil create -volname ShipCheckFixture -srcfolder "$DMG_ROOT" -ov -format UDZO "$DMG" >/dev/null
+          echo "SHIPCHECK_ZIP=$ZIP" >> "$GITHUB_ENV"
+          echo "SHIPCHECK_DMG=$DMG" >> "$GITHUB_ENV"
+
+      - name: Verify ZIP fixture
+        uses: ./
+        with:
+          artifact: ${{ env.SHIPCHECK_ZIP }}
+          expected-bundle-id: dev.shipcheck.fixture
+          expected-version: 1.2.3
+          expected-build: "42"
+          require-gatekeeper: "false"
+          require-notarization: "false"
+          receipt-path: ${{ runner.temp }}/shipcheck-zip.json
+
+      - name: Verify DMG fixture
+        uses: ./
+        with:
+          artifact: ${{ env.SHIPCHECK_DMG }}
+          expected-bundle-id: dev.shipcheck.fixture
+          expected-version: 1.2.3
+          expected-build: "42"
+          require-gatekeeper: "false"
+          require-notarization: "false"
+          receipt-path: ${{ runner.temp }}/shipcheck-dmg.json
+
+      - name: Assert packaged receipts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os
+          for filename, kind in [('shipcheck-zip.json', 'zip'), ('shipcheck-dmg.json', 'dmg')]:
+              path = os.path.join(os.environ['RUNNER_TEMP'], filename)
+              data = json.load(open(path))
+              assert data['status'] == 'PASS', data
+              assert data['artifact_type'] == kind, data
+              assert data['bundle_id'] == 'dev.shipcheck.fixture', data
           PY
 
       - name: Reject identity drift
@@ -111,5 +162,7 @@ jobs:
           name: shipcheck-test-receipts
           path: |
             ${{ runner.temp }}/shipcheck-positive.json
+            ${{ runner.temp }}/shipcheck-zip.json
+            ${{ runner.temp }}/shipcheck-dmg.json
             ${{ runner.temp }}/shipcheck-negative.json
           if-no-files-found: warn
