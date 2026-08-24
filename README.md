@@ -27,7 +27,7 @@ jobs:
       # Produce or download the exact artifact customers will receive before this step.
 
       - name: ShipCheck
-        uses: roybogs/shipcheck@main
+        uses: roybogs/shipcheck@v1
         with:
           artifact: dist/MyApp.dmg
           expected-bundle-id: com.example.MyApp
@@ -35,7 +35,7 @@ jobs:
           expected-architectures: arm64 x86_64
 ```
 
-For production releases, pin ShipCheck to `roybogs/shipcheck@v1` once the v1 tag is published.
+Use `roybogs/shipcheck@v1` for the supported major release line, or pin an immutable version such as `@v1.0.0` for maximum reproducibility.
 
 ## What it checks
 
@@ -50,6 +50,7 @@ For production releases, pin ShipCheck to `roybogs/shipcheck@v1` once the v1 tag
 - signing Team ID
 - executable architectures
 - entitlements snapshot hash
+- GitHub repository, commit, workflow/run, and runner provenance
 - optional launch smoke test for apps
 - JSON release receipt
 - human-readable GitHub Actions summary
