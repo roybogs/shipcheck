@@ -1,0 +1,41 @@
+name: Verify exact macOS release artifact
+
+on:
+  workflow_dispatch:
+    inputs:
+      artifact_url:
+        description: Public URL of the exact release artifact to verify
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  shipcheck:
+    runs-on: macos-14
+    steps:
+      - name: Download exact customer artifact
+        shell: bash
+        env:
+          ARTIFACT_URL: ${{ inputs.artifact_url }}
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 "$ARTIFACT_URL" --output "$RUNNER_TEMP/release.dmg"
+
+      - name: Verify release
+        id: shipcheck
+        uses: roybogs/shipcheck@main
+        with:
+          artifact: ${{ runner.temp }}/release.dmg
+          expected-bundle-id: com.example.MyApp
+          expected-team-id: ABCDE12345
+          expected-architectures: arm64 x86_64
+          receipt-path: ${{ runner.temp }}/shipcheck-receipt.json
+
+      - name: Preserve receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: shipcheck-receipt
+          path: ${{ runner.temp }}/shipcheck-receipt.json
